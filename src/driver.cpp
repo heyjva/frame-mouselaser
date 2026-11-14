@@ -34,7 +34,7 @@
 using namespace vr;
 
 static const char *k_section = "driver_mouselaser";
-static const char *k_version = "0.5.1-experimental";
+static const char *k_version = "0.5.2-experimental";
 
 static void Log(const char *fmt, ...)
 {
@@ -232,7 +232,7 @@ private:
     Settings m_settings;
     std::atomic<bool> m_run{false};
     std::thread m_thread;
-    int m_fd = -1;
+    std::vector<int> m_fds;
 
     bool IsMouse(int fd, std::string &name)
     {
@@ -253,6 +253,7 @@ private:
 
     bool Open()
     {
+        m_fds.clear();
         DIR *dir = opendir("/dev/input");
         if (!dir) return false;
         while (dirent *e = readdir(dir))
@@ -264,35 +265,43 @@ private:
             std::string name;
             if (IsMouse(fd, name))
             {
-                m_fd = fd;
+                // Some mice expose buttons and movement on separate evdev nodes;
+                // take them all so the toggle button and the movement are both seen.
+                m_fds.push_back(fd);
                 Log("using %s (%s)\n", path.c_str(), name.c_str());
-                closedir(dir);
-                return true;
+                if (m_fds.size() >= 8) break;
             }
-            close(fd);
+            else
+                close(fd);
         }
         closedir(dir);
-        return false;
+        return !m_fds.empty();
     }
 
     void Close()
     {
-        if (m_fd >= 0)
+        for (int fd : m_fds)
         {
-            ioctl(m_fd, EVIOCGRAB, 0);
-            close(m_fd);
-            m_fd = -1;
+            ioctl(fd, EVIOCGRAB, 0);
+            close(fd);
         }
+        m_fds.clear();
         SetActive(false);
     }
 
     void SetActive(bool on)
     {
         if (active == on) return;
-        if (m_fd >= 0 && ioctl(m_fd, EVIOCGRAB, on ? 1 : 0) < 0 && on)
+        if (on)
         {
-            Log("EVIOCGRAB failed (%s), staying inactive\n", strerror(errno));
-            return;
+            for (int fd : m_fds)
+                if (ioctl(fd, EVIOCGRAB, 1) < 0)
+                    Log("EVIOCGRAB failed on fd %d (%s)\n", fd, strerror(errno));
+        }
+        else
+        {
+            for (int fd : m_fds)
+                ioctl(fd, EVIOCGRAB, 0);
         }
         left = right = middle = back = false;
         dx = dy = wheel = hwheel = 0;
@@ -305,25 +314,32 @@ private:
     {
         while (m_run)
         {
-            if (m_fd < 0 && !Open())
+            if (m_fds.empty() && !Open())
             {
                 for (int i = 0; i < 20 && m_run; i++) usleep(100 * 1000);
                 continue;
             }
-            pollfd pfd = {m_fd, POLLIN, 0};
-            int r = poll(&pfd, 1, 200);
+            std::vector<pollfd> pfds;
+            for (size_t i = 0; i < m_fds.size(); i++)
+                pfds.push_back({m_fds[i], POLLIN, 0});
+            int r = poll(pfds.data(), pfds.size(), 200);
             if (r <= 0) continue;
-            if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))
+            bool gone = false;
+            for (size_t i = 0; i < pfds.size(); i++)
             {
-                Log("mouse disappeared\n");
-                Close();
-                continue;
+                if (pfds[i].revents & (POLLERR | POLLHUP | POLLNVAL))
+                    gone = true;
+                else
+                {
+                    input_event ev;
+                    ssize_t n;
+                    while ((n = read(m_fds[i], &ev, sizeof(ev))) == sizeof(ev))
+                        Handle(ev);
+                    if (n < 0 && errno == ENODEV)
+                        gone = true;
+                }
             }
-            input_event ev;
-            ssize_t n;
-            while ((n = read(m_fd, &ev, sizeof(ev))) == sizeof(ev))
-                Handle(ev);
-            if (n < 0 && errno == ENODEV)
+            if (gone)
             {
                 Log("mouse disappeared\n");
                 Close();

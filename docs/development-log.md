@@ -74,6 +74,30 @@ The broader notes from that session (hardware, display pipeline, KDE scale, ultr
     - Observation: SteamVR also sends `event 100`/`101` (TrackedDeviceActivated/Deactivated) for our device on every toggle, even though it stays connected. This was already the case with 0.5.0. We don't know what it means, and it causes no visible problem.
     - The owner confirmed the real **left controller loses its laser while laser mode is on**, as expected: the device holds the left-hand slot. It is fine with laser mode off. `activeRole: 2` moves this to the right hand.
 
+19. **Laser "vanished" — device selection bug, 0.5.2** (2026-11-14, debugging session with an AI assistant).
+    - Symptom: the laser pointer stopped appearing. `vrserver.txt` showed the driver re-attaching after a full USB re-enumeration (`usb 1-1: USB disconnect` + re-enumerate, which the Frame does when the display hot-plugs), but to the **Keychron Link-KM** — a keyboard-only device with a silent mouse interface — not the Razer ProClickM.
+    - Root cause 1: `MouseReader::Open()` picked "the first device with REL_X/REL_Y and BTN_LEFT" in `readdir()` order. `readdir` order is hash order on ext4, not numeric, so which mouse wins is arbitrary. With two matching mice (Razer + Keychron), the Keychron won.
+    - Root cause 2: the Razer ProClickM exposes **buttons and movement on separate evdev nodes** (`event4` = "Razer ProClickM" with BTN_LEFT…BTN_EXTRA; `event6` = "Razer ProClickM Mouse" with REL). The driver read a single fd, so even pointed at the Razer it missed the toggle button (BTN_EXTRA on `event4`) while reading movement (`event6`).
+    - Fixes:
+      - Runtime: `driver_mouselaser.deviceNameFilter = "Razer"` in `~/.config/openvr/config/steamvr.vrsettings` (steered the single-fd selection at the right mouse).
+      - Code: `MouseReader` now collects **all** matching devices (capped at 8) into `std::vector<int> m_fds` and polls/grabs them together. Both Razer interfaces are opened; the grab is exclusive when active, so the desktop never sees the mouse in laser mode and events are not double-handled. A drop on any fd re-opens the whole set.
+      - Rebuilt in-place; `systemctl --user restart steamvr` reloaded the `.so` (the driver re-registers from the same repo path, no `vrpathreg` change needed).
+    - Log confirms the fix:
+      ```
+      [Info] - mouselaser: using /dev/input/event6 (Razer ProClickM Mouse)
+      [Info] - mouselaser: using /dev/input/event4 (Razer ProClickM)
+      ```
+      Owner confirmed the laser works.
+    - Version string in the source was bumped to 0.5.2-experimental.
+    - **Debugging lessons (this Frame, 2026-11-14):**
+      - `systemctl --user` from a terminal inside the VR overlay fails ("Failed to connect to user scope bus") because `XDG_RUNTIME_DIR`/bus env is stale there. Prefix with `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus XDG_RUNTIME_DIR=/run/user/1000` — the user bus is reachable from SSH/containers too.
+      - `gamescope-session.service` is `RefuseManualStart`; it is `PartOf=steamvr.service`. Restart `steamvr` (user unit) to restart both. A SteamVR restart also restarts gamescope, so the nested desktop/terminal dies — run it last.
+      - If a restarted gamescope logs `openvr: Unable to init VR runtime: Not starting vrserver for background app (121)`, it fell back to the headless backend and stays there (the cursor in the VR overlay disappears). It is a startup race: restart `steamvr` again now that the VR server is up.
+      - `/` is a btrfs subvolume with the **read-only property** set (`btrfs property get /` → `ro=true`), even though the mount says rw. Write there with `sudo btrfs property set / ro false` first (the property and any writes revert on system update).
+      - gamescope's flat-desktop cursor is `--cursor /usr/share/holo/holo-cursor.png`; only `holo-cursor-{32,64,128,256}.png` exist. A missing `holo-cursor.png` (no symlink) makes the desktop cursor invisible — unrelated to this driver, but it looked the same.
+      - Raw input sanity check while the laser is "dead": `sudo timeout 5 cat /dev/input/eventN | xxd` tells you instantly whether the problem is the hardware, the selection, or the driver.
+      - Decode button codes from `/sys/class/input/inputN/capabilities/key` (hex word bit N = key N); 7 = BTN_EXTRA, 8 = BTN_SIDE.
+
 ## State at hand-off
 - The driver is registered from this repo (`<repo>/driver/mouselaser`). The old prototype registration has been removed.
 - Current version: 0.5.1-experimental, tested on the headset (entry 18).
