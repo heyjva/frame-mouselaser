@@ -34,7 +34,7 @@
 using namespace vr;
 
 static const char *k_section = "driver_mouselaser";
-static const char *k_version = "0.5.2-experimental";
+static const char *k_version = "0.5.3-experimental";
 
 static void Log(const char *fmt, ...)
 {
@@ -503,7 +503,8 @@ public:
         VRDriverInput()->UpdateScalarComponent(m_triggerValue, l ? 1.f : 0.f, 0);
         VRDriverInput()->UpdateBooleanComponent(m_a, active && m_mouse.right, 0);
         VRDriverInput()->UpdateBooleanComponent(m_b, active && m_mouse.middle, 0);
-        VRDriverInput()->UpdateBooleanComponent(m_back, active && m_mouse.back, 0);
+        // Back now drives the Steam/home button, so it must work with laser mode off too.
+        VRDriverInput()->UpdateBooleanComponent(m_back, m_mouse.back, 0);
         VRDriverInput()->UpdateBooleanComponent(m_grip, active, 0); // holds "quick mouse" on
         VRDriverInput()->UpdateBooleanComponent(m_stickTouch, stickX != 0.f || stickY != 0.f, 0);
         VRDriverInput()->UpdateScalarComponent(m_stickX, stickX, 0);

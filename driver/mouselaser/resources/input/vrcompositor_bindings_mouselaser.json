@@ -111,7 +111,7 @@
 					"mode": "button",
 					"inputs": {
 						"click": {
-							"output": "/actions/lasermouse/in/back"
+							"output": "/actions/system/in/ToggleDashboard"
 						}
 					}
 				},
@@ -120,7 +120,7 @@
 					"mode": "button",
 					"inputs": {
 						"click": {
-							"output": "/actions/lasermouse/in/back"
+							"output": "/actions/system/in/ToggleDashboard"
 						}
 					}
 				},
@@ -129,7 +129,7 @@
 					"mode": "button",
 					"inputs": {
 						"click": {
-							"output": "/actions/lasermouse/in/back"
+							"output": "/actions/system/in/ToggleDashboard"
 						}
 					}
 				}

@@ -98,8 +98,15 @@ The broader notes from that session (hardware, display pipeline, KDE scale, ultr
       - Raw input sanity check while the laser is "dead": `sudo timeout 5 cat /dev/input/eventN | xxd` tells you instantly whether the problem is the hardware, the selection, or the driver.
       - Decode button codes from `/sys/class/input/inputN/capabilities/key` (hex word bit N = key N); 7 = BTN_EXTRA, 8 = BTN_SIDE.
 
+20. **Back side button = Steam dashboard, 0.5.3** (2026-11-14). The owner wanted the Razer ProClickM's back side button (BTN_SIDE, evdev 275) to open the Steam dashboard without reaching for a controller.
+    - First attempt bound `/input/back` to `/actions/system/in/home` — nothing happened. Ground truth from the Frame's own binding (`/opt/steamvr/drivers/frame_controller/resources/input/vrcompositor_bindings_frame_controller.json`): the Steam button (`input/system`) maps to **`/actions/system/in/ToggleDashboard`**. `/actions/lasermouse/in/home` is a *different* (lasermouse) action, bound to the right controller's A. Cross-checked online (SteamVR gamepad/holographic bindings, ValveSoftware/openvr#1933 custom-driver example) — `ToggleDashboard` confirmed.
+    - Second fix (code): `UpdateBooleanComponent(m_back, active && m_mouse.back)` gated the back button on laser mode, so with the laser off it never reached the compositor. It now sends unconditionally. In practice the dashboard toggle is used while laser mode is on, which is the natural flow (laser on → press back → dashboard; dashboard closes on exit, so re-open is a fresh single toggle).
+    - Evdev note from this session: the Razer ProClickM's back button emits code **275** on the *buttons* node (`event4`), confirmed with `cat /dev/input/event4 | xxd` (struct input_event: 8-byte timeval, u16 type, u16 code, s32 value).
+    - **On-headset test: working** (owner).
+    - This repo is now `heyjva/frame-mouselaser`, a fork of `Andalu30/frame-unboundedMouse-vibed` (kept as `upstream`).
+
 ## State at hand-off
-- The driver is registered from this repo (`<repo>/driver/mouselaser`). The old prototype registration has been removed.
-- Current version: 0.5.1-experimental, tested on the headset (entry 18).
+- This repo is `heyjva/frame-mouselaser`, a fork of `Andalu30/frame-unboundedMouse-vibed` (the upstream remote). The driver is registered from this repo (`<repo>/driver/mouselaser`).
+- Current version: 0.5.3-experimental, tested on the headset (entries 19–20).
 - Nothing is vendored. The build depends on SteamVR's bundled header.
 - Licensed MIT (see `LICENSE`). SPDX tags are on the sources.
